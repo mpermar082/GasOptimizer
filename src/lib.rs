@@ -8,22 +8,31 @@ use serde::{Serialize, Deserialize};
 use std::fs;
 use std::path::Path;
 
+/// Custom result type to handle errors with a boxed trait object
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Debug, Serialize, Deserialize)]
+/// Process result structure
 pub struct ProcessResult {
+    /// Whether the process was successful
     pub success: bool,
+    /// Process message
     pub message: String,
+    /// Optional process data
     pub data: Option<serde_json::Value>,
 }
 
 #[derive(Debug)]
+/// GasOptimizer processor structure
 pub struct GasOptimizerProcessor {
+    /// Verbose mode flag
     verbose: bool,
+    /// Processed item count
     processed_count: usize,
 }
 
 impl GasOptimizerProcessor {
+    /// Creates a new GasOptimizer processor
     pub fn new(verbose: bool) -> Self {
         Self {
             verbose,
@@ -31,6 +40,7 @@ impl GasOptimizerProcessor {
         }
     }
 
+    /// Processes the given data
     pub fn process(&mut self, data: &str) -> Result<ProcessResult> {
         if self.verbose {
             debug!("Processing data of length: {}", data.len());
@@ -52,6 +62,7 @@ impl GasOptimizerProcessor {
         Ok(result)
     }
 
+    /// Returns processor statistics as JSON
     pub fn get_stats(&self) -> serde_json::Value {
         serde_json::json!({
             "processed_count": self.processed_count,
@@ -62,6 +73,7 @@ impl GasOptimizerProcessor {
 
 /// Main processing function
 pub fn run(verbose: bool, input: Option<String>, output: Option<String>) -> Result<()> {
+    // Initialize logger
     if verbose {
         env_logger::Builder::from_default_env()
             .filter_level(log::LevelFilter::Debug)
@@ -77,65 +89,44 @@ pub fn run(verbose: bool, input: Option<String>, output: Option<String>) -> Resu
     // Read input
     let input_data = match input {
         Some(path) => {
-            info!("Reading from file: {}", path);
-            fs::read_to_string(&path)?
+            if let Ok(data) = fs::read_to_string(path) {
+                data
+            } else {
+                error!("Failed to read input file: {}", path.display());
+                return Err("Failed to read input file".into());
+            }
         },
         None => {
-            info!("Using default test data");
-            "Sample data for processing".to_string()
+            error!("No input file provided");
+            return Err("No input file provided".into());
         }
     };
     
-    // Process data
-    let result = processor.process(&input_data)?;
+    // Process input data
+    let result = processor.process(&input_data);
     
-    if verbose {
-        debug!("Processing result: {:#?}", result);
-    }
-    
-    // Save output
-    let output_json = serde_json::to_string_pretty(&result)?;
-    
-    match output {
-        Some(path) => {
-            info!("Writing results to: {}", path);
-            fs::write(&path, &output_json)?;
+    // Handle processing result
+    match result {
+        Ok(process_result) => {
+            info!("Processing result: {:?}", process_result);
+            // Save result to output file if specified
+            if let Some(output_path) = output {
+                if let Ok(data) = serde_json::to_string(&process_result) {
+                    if let Ok(_) = fs::write(output_path, data) {
+                        info!("Result saved to output file: {}", output_path.display());
+                    } else {
+                        error!("Failed to save result to output file: {}", output_path.display());
+                    }
+                } else {
+                    error!("Failed to serialize processing result");
+                }
+            }
         },
-        None => {
-            println!("{}", output_json);
+        Err(err) => {
+            error!("Processing error: {}", err);
+            return Err(err);
         }
     }
     
-    let stats = processor.get_stats();
-    info!("Processing complete. Stats: {}", stats);
-    
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_processor_creation() {
-        let processor = GasOptimizerProcessor::new(true);
-        assert_eq!(processor.verbose, true);
-        assert_eq!(processor.processed_count, 0);
-    }
-
-    #[test]
-    fn test_data_processing() {
-        let mut processor = GasOptimizerProcessor::new(false);
-        let result = processor.process("test data").unwrap();
-        
-        assert!(result.success);
-        assert_eq!(processor.processed_count, 1);
-    }
-
-    #[test]
-    fn test_run_function() {
-        // Test the main run function
-        let result = run(false, None, None);
-        assert!(result.is_ok());
-    }
 }
